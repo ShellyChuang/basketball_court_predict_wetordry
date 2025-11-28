@@ -3,19 +3,35 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>籃球場天氣哨兵</title>
-    <!-- 引入 Tailwind CSS -->
+    <title>籃球場天氣哨兵 AI Ultimate</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 引入 React 和 Babel -->
     <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- 引入 Lucide Icons (使用全局變數) -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    
+    <!-- 引入 TensorFlow.js 和 COCO-SSD 模型 -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     
     <style>
         body { background-color: #0f172a; color: white; }
         .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); }
+        @keyframes pulse-red {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.9); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        .live-dot {
+            width: 8px; height: 8px; background-color: #ef4444; border-radius: 50%;
+            display: inline-block; animation: pulse-red 1.5s infinite ease-in-out;
+        }
+        iframe { border: 0; overflow: hidden; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        .meter-fill { transition: width 0.5s ease-out; }
     </style>
 </head>
 <body>
@@ -25,32 +41,31 @@
         const { useState, useEffect, useRef } = React;
 
         // --- 設定區 ---
-        // 填入你的中央氣象局 API Key (若為空字串，將自動使用 Open-Meteo 免費圖資)
         const CWA_API_KEY = "CWA-CF841C96-88BC-4532-82C4-B7BF7AD68209"; 
 
-        // 球場資料
         const COURTS = [
             {
                 id: 'xinsheng',
                 name: '新生公園籃球場',
-                subName: '台北市 民族建國路口監測點',
-                lat: 25.0683,
-                lon: 121.5332,
-                camUrl: "https://c01.twipcam.com/cam/snapshot/tpe-000241.jpg",
+                subName: 'Live 影片串流',
+                lat: 25.06864561047287,
+                lon: 121.5326769316123,
+                type: 'hls', 
+                url: "https://jtmctrafficcctv3.gov.taipei/NVR/81662387-c95d-429d-8e7b-0f9a2126c9af/live.m3u8",
                 stationId: "C0A9F0", 
             },
             {
                 id: 'chongyang',
                 name: '重陽橋堤外籃球場',
-                subName: '新北市 三重區重陽橋監測點',
-                lat: 25.0845,
-                lon: 121.4992,
-                camUrl: "https://c01.twipcam.com/cam/snapshot/nwt-000249.jpg",
+                subName: 'Live 影片串流',
+                lat: 25.082149680144155,
+                lon: 121.50035843449184,
+                type: 'hls', 
+                url: "https://cctvatis4.ntpc.gov.tw/hls/C000249/live.m3u8",
                 stationId: "C0AD30",
             }
         ];
 
-        // 簡單的圖示元件
         const Icons = {
             CloudRain: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M16 14v6"/><path d="M8 14v6"/><path d="M12 16v6"/></svg>,
             Sun: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>,
@@ -59,185 +74,335 @@
             RefreshCw: ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>,
             MapPin: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>,
             Umbrella: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12a10.06 10.06 0 0 0-20 0Z"/><path d="M12 12v8a2 2 0 0 0 4 0"/><path d="M12 2v1"/></svg>,
-            AlertCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+            ClockRain: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="10"/></svg>,
+            AlertCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>,
+            Droplets: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.8-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z"/><path d="M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97"/></svg>,
+            Wind: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.7 7.7a2.5 2.5 0 1 1 1.8 4.3H2"/><path d="M9.6 4.6A2 2 0 1 1 11 8H2"/><path d="M12.6 19.4A2 2 0 1 0 14 16H2"/></svg>,
+            Eye: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>,
+            Zap: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+            Brain: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/></svg>
         };
 
         function App() {
             const [currentCourtIndex, setCurrentCourtIndex] = useState(0);
             const currentCourt = COURTS[currentCourtIndex];
-
-            const [imageUrl, setImageUrl] = useState(`${currentCourt.camUrl}?t=${Date.now()}`);
-            const [weather, setWeather] = useState(null);
-            const [brightness, setBrightness] = useState(0);
-            const [loading, setLoading] = useState(true);
-            const [error, setError] = useState('');
-            const [lastUpdated, setLastUpdated] = useState('');
-            const [dataSource, setDataSource] = useState('Open-Meteo');
             
-            const imgRef = useRef(null);
+            const [weather, setWeather] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [lastUpdated, setLastUpdated] = useState('');
+            const [imageUrl, setImageUrl] = useState(''); 
+            
+            // AI 視覺分析狀態 (含物件偵測)
+            const [cvData, setCvData] = useState({ 
+                brightness: 0, 
+                reflection: 0, 
+                available: false,
+                umbrellas: 0, // 雨傘數量
+                persons: 0,   // 行人數量
+                motorcycles: 0, // 機車數量
+                isObjModelLoaded: false // 模型是否載入
+            });
+            
+            const mediaRef = useRef(null);
+            const hlsRef = useRef(null);
+            const modelRef = useRef(null); // 存放 COCO-SSD 模型
 
-            // 修改 useEffect 邏輯：分為「資料更新」和「影像更新」兩個迴圈
+            // 1. 初始化模型
             useEffect(() => {
-                // 1. 初始化 (切換球場時觸發)
+                const loadModel = async () => {
+                    try {
+                        console.log("Loading COCO-SSD model...");
+                        const model = await cocoSsd.load();
+                        modelRef.current = model;
+                        setCvData(prev => ({ ...prev, isObjModelLoaded: true }));
+                        console.log("Model loaded!");
+                    } catch (err) {
+                        console.error("Failed to load model", err);
+                    }
+                };
+                loadModel();
+            }, []);
+
+            // 2. 初始化與定時器
+            useEffect(() => {
                 setLoading(true);
                 setWeather(null);
-                setBrightness(0);
-                setError('');
-                fetchWeather(); 
-                setImageUrl(`${currentCourt.camUrl}?t=${Date.now()}`); // 立即抓一張圖
+                // 重置 CV 數據 (保留模型載入狀態)
+                setCvData(prev => ({ ...prev, brightness: 0, reflection: 0, umbrellas: 0, persons: 0, motorcycles: 0, available: false }));
+                fetchWeather();
                 
-                // 2. 氣象資料更新迴圈 (每 60 秒)
-                const weatherInterval = setInterval(() => {
-                    fetchWeather();
-                    const now = new Date();
-                    setLastUpdated(now.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }));
-                }, 60000);
+                if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+                
+                if (currentCourt.type === 'image') {
+                    setImageUrl(`${currentCourt.url}?t=${Date.now()}`);
+                    setLoading(false);
+                } else if (currentCourt.type === 'iframe') {
+                    setLoading(false);
+                }
 
-                // 3. 影像串流模擬迴圈 (每 3 秒) - 讓它看起來像動態的
-                const imageInterval = setInterval(() => {
-                    // 只更新圖片 URL，不觸發 loading 狀態，避免畫面閃爍
-                    setImageUrl(`${currentCourt.camUrl}?t=${Date.now()}`);
+                const weatherInterval = setInterval(() => { fetchWeather(); }, 60000);
+                
+                // 畫面更新 (3秒)
+                const mediaInterval = setInterval(() => {
+                    if (currentCourt.type === 'image') {
+                        setImageUrl(`${currentCourt.url}?t=${Date.now()}`);
+                    } 
                 }, 3000);
+
+                // AI 分析 (5秒) - 避免過度消耗效能
+                const aiInterval = setInterval(() => {
+                    const el = mediaRef.current;
+                    if (el) {
+                        // 確保元素有載入
+                        const isReady = (currentCourt.type === 'image' && el.complete) || 
+                                      (currentCourt.type === 'hls' && !el.paused);
+                        if (isReady) {
+                            analyzeFrame(el);
+                            detectObjects(el); // 執行物件偵測
+                        }
+                    }
+                }, 5000);
 
                 return () => {
                     clearInterval(weatherInterval);
-                    clearInterval(imageInterval);
+                    clearInterval(mediaInterval);
+                    clearInterval(aiInterval);
+                    if (hlsRef.current) hlsRef.current.destroy();
                 };
-            }, [currentCourtIndex]); // 當球場改變時，重置所有計時器
+            }, [currentCourtIndex]);
 
-            // 1. 抓取氣象局資料
-            const fetchCwaData = async () => {
-                if (!CWA_API_KEY) return false;
-                try {
-                    const url = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001?Authorization=${CWA_API_KEY}&StationId=${currentCourt.stationId}`;
-                    const response = await fetch(url);
-                    const data = await response.json();
-
-                    if (data.success === "true" && data.records.Station.length > 0) {
-                        const stationData = data.records.Station[0];
-                        const rainElement = stationData.RainfallElement;
-                        setWeather({
-                            source: 'CWA',
-                            min10: Math.max(0, rainElement.Now.Precipitation), 
-                            rain: Math.max(0, rainElement.Past1hr.Precipitation),
-                            dayRain: Math.max(0, rainElement.Past24hr.Precipitation),
+            // HLS Video
+            useEffect(() => {
+                if (currentCourt.type === 'hls' && mediaRef.current) {
+                    const video = mediaRef.current;
+                    if (Hls.isSupported()) {
+                        const hls = new Hls();
+                        hls.loadSource(currentCourt.url);
+                        hls.attachMedia(video);
+                        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                            video.play().catch(e => console.log("Autoplay blocked", e));
+                            setLoading(false);
                         });
-                        setDataSource('CWA');
-                        return true;
+                        hls.on(Hls.Events.ERROR, (event, data) => {
+                            if (data.fatal) hls.startLoad();
+                        });
+                        hlsRef.current = hls;
+                    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                        video.src = currentCourt.url;
+                        video.addEventListener('loadedmetadata', () => { video.play(); setLoading(false); });
                     }
-                } catch (e) {
-                    console.error("CWA API Error:", e);
-                    return false;
                 }
-                return false;
+            }, [currentCourt.type, currentCourt.url]);
+
+            // AI: 像素分析 (反光/亮度)
+            const analyzeFrame = (source) => {
+                try {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 320;
+                    canvas.height = 180;
+                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+                    
+                    const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const data = frame.data;
+                    const pixelCount = data.length / 4;
+
+                    let totalLum = 0;
+                    let highLightCount = 0;
+                    const startPixel = Math.floor(pixelCount * 0.5); 
+                    const step = 40; 
+
+                    for (let i = startPixel * 4; i < data.length; i += step) {
+                        const r = data[i];
+                        const g = data[i + 1];
+                        const b = data[i + 2];
+                        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                        totalLum += lum;
+                        if (lum > 245) highLightCount++;
+                    }
+
+                    const avgLum = totalLum / (pixelCount * 0.5 / (step / 4));
+                    const reflectionRatio = (highLightCount / (pixelCount * 0.5 / (step / 4))) * 100;
+
+                    setCvData(prev => ({
+                        ...prev,
+                        brightness: avgLum,
+                        reflection: reflectionRatio,
+                        available: true
+                    }));
+
+                } catch (e) {
+                    setCvData(prev => ({ ...prev, available: false }));
+                }
             };
 
-            // 2. 抓取 Open-Meteo
-            const fetchOpenMeteo = async () => {
+            // AI: 物件偵測 (雨傘/人/車)
+            const detectObjects = async (source) => {
+                if (!modelRef.current) return;
+                
                 try {
-                    const response = await fetch(
-                        `https://api.open-meteo.com/v1/forecast?latitude=${currentCourt.lat}&longitude=${currentCourt.lon}&current=precipitation,rain,showers,weather_code&timezone=auto`
-                    );
-                    const data = await response.json();
-                    setWeather({
-                        source: 'Open-Meteo',
-                        rain: data.current.rain + data.current.showers,
-                        precipitation: data.current.precipitation,
+                    // 設定偵測信心門檻 0.5
+                    const predictions = await modelRef.current.detect(source);
+                    
+                    let umbrellas = 0;
+                    let persons = 0;
+                    let motorcycles = 0;
+
+                    predictions.forEach(prediction => {
+                        if (prediction.class === 'umbrella') umbrellas++;
+                        if (prediction.class === 'person') persons++;
+                        if (prediction.class === 'motorcycle') motorcycles++;
                     });
-                    setDataSource('Open-Meteo');
-                } catch (err) {
-                    setError("無法取得氣象資料");
+
+                    setCvData(prev => ({
+                        ...prev,
+                        umbrellas,
+                        persons,
+                        motorcycles
+                    }));
+                    
+                } catch (e) {
+                    console.warn("Object detection failed (likely CORS or format issue)", e);
                 }
             };
 
             const fetchWeather = async () => {
-                const cwaSuccess = await fetchCwaData();
-                if (!cwaSuccess) await fetchOpenMeteo();
+                let rain10m = 0;
+                let rain1h = 0;
+                let humidity = 0;
+                let wind = 0;
+                let sourceLabel = 'Open-Meteo';
+
+                try {
+                    const omRes = await fetch(
+                        `https://api.open-meteo.com/v1/forecast?latitude=${currentCourt.lat}&longitude=${currentCourt.lon}&current=relative_humidity_2m,wind_speed_10m&minutely_15=precipitation&forecast_days=1&timezone=auto`
+                    );
+                    const omData = await omRes.json();
+                    humidity = omData.current.relative_humidity_2m;
+                    wind = omData.current.wind_speed_10m;
+                    
+                    const now = new Date();
+                    const times = omData.minutely_15.time;
+                    let closestIndex = 0;
+                    let minDiff = Infinity;
+                    times.forEach((t, i) => {
+                        const diff = Math.abs(now - new Date(t));
+                        if (diff < minDiff) { minDiff = diff; closestIndex = i; }
+                    });
+                    
+                    rain10m = omData.minutely_15.precipitation[closestIndex] || 0;
+                    for (let k = 0; k < 4; k++) {
+                        if (closestIndex - k >= 0) {
+                            rain1h += omData.minutely_15.precipitation[closestIndex - k];
+                        }
+                    }
+                    sourceLabel = 'Open-Meteo (多維數據)';
+                } catch (e) { console.error("OpenMeteo Error", e); }
+
+                if (CWA_API_KEY) {
+                    try {
+                        const cwaRes = await fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001?Authorization=${CWA_API_KEY}&StationId=${currentCourt.stationId}`);
+                        const cwaData = await cwaRes.json();
+                        if (cwaData.success === "true" && cwaData.records.Station.length > 0) {
+                            const station = cwaData.records.Station[0].RainfallElement;
+                            const past10 = station.Past10Min ? station.Past10Min.Precipitation : 0;
+                            const nowRain = station.Now ? station.Now.Precipitation : 0;
+                            const past1hr = station.Past1hr ? station.Past1hr.Precipitation : 0;
+                            rain10m = Math.max(0, past10, nowRain);
+                            rain1h = Math.max(0, past1hr);
+                            sourceLabel = 'CWA (即時實測)';
+                        }
+                    } catch (e) { console.error("CWA Error", e); }
+                }
+
+                setWeather({ rain10m, rain1h, humidity, wind, sourceLabel });
             };
 
-            // 手動刷新按鈕 (會觸發 loading 轉圈)
             const manualRefresh = () => {
                 setLoading(true);
                 fetchWeather();
-                setImageUrl(`${currentCourt.camUrl}?t=${Date.now()}`);
+                if (currentCourt.type === 'image') setImageUrl(`${currentCourt.url}?t=${Date.now()}`);
                 const now = new Date();
                 setLastUpdated(now.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }));
             };
 
-            const handleImageLoad = () => {
-                if (imgRef.current) {
-                    try {
-                        const canvas = document.createElement('canvas');
-                        canvas.width = imgRef.current.width;
-                        canvas.height = imgRef.current.height;
-                        const ctx = canvas.getContext('2d');
-                        if (ctx) {
-                            ctx.drawImage(imgRef.current, 0, 0);
-                            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                            const data = imageData.data;
-                            let colorSum = 0;
-                            for (let i = 0, len = data.length; i < len; i += 4) {
-                                let avg = Math.floor((data[i] + data[i + 1] + data[i + 2]) / 3);
-                                colorSum += avg;
-                            }
-                            const brightness = Math.floor(colorSum / (imgRef.current.width * imgRef.current.height));
-                            setBrightness(brightness);
-                        }
-                    } catch (e) {
-                        setBrightness(-1); 
-                    }
+            // 🌟 最終判定 (物理數據 + AI 視覺 + 物件偵測)
+            const getDecision = () => {
+                if (!weather) return { code: 'analyzing', text: '分析中...', reason: '正在讀取數據...' };
+
+                const now = new Date();
+                const hour = now.getHours();
+                const isNight = hour >= 18 || hour < 6;
+                const isLightingHours = hour >= 17 && hour < 22;
+
+                const isRainingNow = weather.rain10m > 0;
+                const isRainedRecently = weather.rain1h > 0;
+                const isVeryHumid = weather.humidity >= 85;
+                const isNoWind = weather.wind < 5;
+                const isWeatherDry = !isRainingNow && !isRainedRecently && weather.humidity < 80;
+
+                // AI 視覺因子
+                const cvWetRisk = cvData.available && isNight && cvData.reflection > 8.0 && !isWeatherDry;
+                
+                // 物件偵測因子 (New!)
+                const hasUmbrella = cvData.umbrellas > 0;
+                // 如果是白天，有偵測到雨傘，不論氣象如何，視為有雨
+                // 如果是晚上，要比較小心 (可能是攤販傘?)，但河濱通常較少攤販，可視為高風險
+                const aiDetectedRain = hasUmbrella;
+
+                // --- 決策樹 ---
+                
+                // 1. 最強判定：看到雨傘 (Visual Confirmation)
+                if (aiDetectedRain) {
+                    return { code: 'wet', text: '有人撐傘', color: 'bg-red-600', reason: `1. AI 偵測到 ${cvData.umbrellas} 把雨傘 ☂️\n2. 現場極高機率正在下雨\n3. 氣象數據僅供參考。` };
                 }
-                // 圖片載入完成，關閉 loading (只有初始載入或手動刷新時會用到)
-                setLoading(false);
+
+                // 2. 次強判定：儀器測到雨
+                if (isRainingNow) {
+                    return { code: 'wet', text: 'NO', color: 'bg-red-600', reason: `1. 現在有雨 (近10分鐘 ${weather.rain10m}mm)\n2. 絕對不宜打球。` };
+                }
+
+                // 3. 滯後乾燥判定
+                if (isRainedRecently) {
+                    if (isNight) {
+                        return { code: 'damp', text: 'NO (地濕)', color: 'bg-red-500', reason: `1. 1小時內曾下雨 (${weather.rain1h}mm)\n2. 晚上無日照，地板難乾\n3. 濕滑危險！` };
+                    }
+                    if (isVeryHumid && isNoWind) {
+                        return { code: 'damp', text: '不建議', color: 'bg-blue-600', reason: `1. 剛下過雨且濕氣重 (${weather.humidity}%)\n2. 無風助乾，場地仍可能積水。` };
+                    }
+                    return { code: 'damp', text: '觀察中', color: 'bg-yellow-600', reason: `1. 雨剛停 (1hr內累積 ${weather.rain1h}mm)\n2. 風速不錯，可能正在風乾\n3. 請現場確認。` };
+                }
+
+                if (cvWetRisk) {
+                    return { code: 'wet', text: '疑似積水', color: 'bg-orange-600', reason: `1. 氣象無雨，但濕度高\n2. AI 偵測到路面強烈反光\n3. 判斷為積水未退。` };
+                }
+
+                if (isVeryHumid && isNoWind && isNight) {
+                    return { code: 'damp', text: '恐返潮', color: 'bg-blue-500', reason: `1. 無雨但濕度極高 (${weather.humidity}%)\n2. 無風且夜間，地板可能凝結露水(反潮)。` };
+                }
+
+                if (isLightingHours) {
+                    return { code: 'go', text: 'GO!', color: 'bg-emerald-600', reason: `1. 1小時內均無雨\n2. AI 未偵測到雨傘\n3. 正值夜間照明時段，衝吧！` };
+                }
+
+                if (isNight && !isLightingHours) {
+                     return { code: 'dark', text: '太暗了', color: 'bg-slate-800', reason: `1. 地乾但已過照明時間\n2. 視線不良。` };
+                }
+
+                return { code: 'go', text: 'GO!', color: 'bg-emerald-600', reason: `1. 10分鐘與1小時內皆無雨\n2. AI 未發現雨傘\n3. 適合運動！` };
             };
 
-            // 判斷邏輯
-            let isRaining = false;
-            let rainValue = 0;
-            if (weather) {
-                if (weather.source === 'CWA') {
-                    isRaining = (weather.min10 > 0) || (weather.rain > 0);
-                    rainValue = weather.rain;
-                } else {
-                    isRaining = (weather.rain > 0 || weather.precipitation > 0);
-                    rainValue = weather.rain || weather.precipitation;
-                }
-            }
-            
-            const isDark = brightness !== -1 && brightness < 40; 
-            
-            let status = "analyzing";
-            let statusText = "分析中...";
-            let statusColor = "bg-slate-700";
-
-            if (!loading && weather) {
-                if (isRaining) {
-                    status = "wet";
-                    statusText = "觀測到降雨，建議放棄 🌧️";
-                    statusColor = "bg-red-600";
-                } else if (isDark) {
-                    status = "dark";
-                    statusText = "太暗了，注意安全 🌑";
-                    statusColor = "bg-yellow-600";
-                } else {
-                    status = "go";
-                    statusText = "場地目前乾燥！🏀";
-                    statusColor = "bg-emerald-600";
-                }
-            }
+            const decision = getDecision();
 
             return (
-                <div className="min-h-screen font-sans flex flex-col items-center p-4">
-                    {/* 標題區 */}
+                <div className="min-h-screen font-sans flex flex-col items-center p-4 pb-20">
                     <div className="w-full max-w-md text-center mb-6 mt-4">
                         <h1 className="text-2xl font-bold tracking-wider flex items-center justify-center gap-2 text-white">
-                            <span className="text-3xl">🏀</span> 
-                            球場天氣哨兵
+                            <span className="text-3xl">🏀</span> 球場天氣哨兵
                         </h1>
-                        <p className="text-slate-400 text-sm mt-1">即時監控與降雨分析</p>
+                        <p className="text-slate-400 text-sm mt-1">氣象 x AI 視覺 x 物件偵測</p>
                     </div>
 
-                    {/* 切換球場 */}
                     <div className="w-full max-w-md flex bg-slate-900 rounded-lg p-1 mb-6 border border-slate-800">
                         {COURTS.map((court, index) => (
                             <button
@@ -254,7 +419,6 @@
                         ))}
                     </div>
 
-                    {/* 當前球場資訊 */}
                     <div className="w-full max-w-md flex items-center gap-2 mb-4 text-slate-300">
                         <Icons.MapPin className="text-orange-400 w-4 h-4" />
                         <span className="font-bold text-lg">{currentCourt.name}</span>
@@ -262,81 +426,95 @@
                             <span className="text-xs text-slate-500 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
                                 {currentCourt.subName}
                             </span>
-                            <span className="text-[10px] text-slate-600 mt-1">
-                                資料來源: {dataSource === 'CWA' ? '中央氣象局 (CWA)' : 'Open-Meteo'}
-                            </span>
                         </div>
                     </div>
 
-                    {/* 狀態大燈 */}
-                    <div className={`w-full max-w-md rounded-2xl p-6 mb-6 text-center transition-all duration-500 shadow-lg border border-white/10 ${statusColor}`}>
-                        <h2 className="text-4xl font-black mb-2 drop-shadow-md text-white">
-                            {loading ? "..." : (status === "go" ? "GO!" : "NO")}
+                    <div className={`w-full max-w-md rounded-2xl p-6 mb-6 text-center transition-all duration-500 shadow-lg border border-white/10 ${decision.color || 'bg-slate-700'}`}>
+                        <h2 className="text-5xl font-black mb-2 drop-shadow-md text-white">
+                            {loading ? "..." : decision.text}
                         </h2>
-                        <p className="text-lg font-medium opacity-90 text-white/90">{statusText}</p>
                     </div>
 
-                    {/* 即時影像 */}
+                    {/* 影像區 (支援 Video, Iframe, Image) */}
                     <div className="w-full max-w-md bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-800 mb-6 relative group aspect-video">
-                        <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-xs text-white flex items-center gap-1 z-10 backdrop-blur-sm">
-                            <Icons.Video className="w-3 h-3"/> 即時監控
+                        <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-xs text-white flex items-center gap-2 z-10 backdrop-blur-sm">
+                            <span className="live-dot"></span>
+                            <span>{cvData.isObjModelLoaded ? 'AI DETECTING' : 'LOADING AI...'}</span>
                         </div>
-                        <img 
-                            ref={imgRef}
-                            src={imageUrl} 
-                            alt="Live Camera" 
-                            crossOrigin="anonymous"
-                            className={`w-full h-full object-cover transition-opacity duration-300 ${loading ? 'opacity-50' : 'opacity-100'}`}
-                            onLoad={handleImageLoad}
-                            onError={() => setError('無法載入影像')}
-                        />
-                        {error && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80 text-red-400">
-                                <Icons.AlertCircle className="mr-2 w-4 h-4" /> {error}
-                            </div>
+                        {currentCourt.type === 'iframe' ? (
+                            <iframe src={currentCourt.url} className="w-full h-full object-cover" allow="autoplay; fullscreen" scrolling="no"></iframe>
+                        ) : currentCourt.type === 'hls' ? (
+                            <video ref={mediaRef} className="w-full h-full object-cover" autoPlay muted playsInline crossOrigin="anonymous"></video>
+                        ) : (
+                            <img ref={mediaRef} src={imageUrl} className="w-full h-full object-cover" crossOrigin="anonymous" alt="Live View" />
                         )}
                     </div>
 
-                    {/* 儀表板 */}
-                    <div className="w-full max-w-md grid grid-cols-2 gap-4">
-                        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 flex flex-col items-center">
-                            <div className="text-slate-400 text-xs mb-1 flex items-center gap-1">
-                                <Icons.Umbrella className="w-3 h-3"/> 
-                                {weather?.source === 'CWA' ? '實測雨量 (1hr)' : '預估雨量'}
-                            </div>
-                            <div className="flex items-center gap-2">
-                                {isRaining ? <Icons.CloudRain className="text-blue-400 w-6 h-6" /> : <Icons.Sun className="text-orange-400 w-6 h-6" />}
-                                <span className="text-2xl font-bold text-slate-200">
-                                    {weather ? (rainValue > 0 ? "有雨" : "乾燥") : "--"}
-                                </span>
-                            </div>
-                            <div className="text-xs text-slate-500 mt-1 font-mono">
-                                {rainValue} mm
-                            </div>
+                    {/* 數據儀表板 */}
+                    <div className="w-full max-w-md grid grid-cols-4 gap-2 mb-4">
+                        <div className="bg-slate-900 p-2 rounded-xl border border-slate-800 flex flex-col items-center justify-center">
+                            <div className="text-slate-400 text-[10px] mb-1 flex items-center gap-1"><Icons.Umbrella className="w-3 h-3"/> 近10分</div>
+                            <div className="text-lg font-bold text-slate-200">{weather ? weather.rain10m : '-'}</div>
                         </div>
-
-                        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 flex flex-col items-center">
-                            <div className="text-slate-400 text-xs mb-1 flex items-center gap-1">
-                                <Icons.Sun className="w-3 h-3"/> 環境亮度
-                            </div>
-                            <div className="flex items-center gap-2">
-                                {brightness < 50 ? <Icons.Moon className="text-yellow-200 w-6 h-6" /> : <Icons.Sun className="text-yellow-500 w-6 h-6" />}
-                                <span className="text-2xl font-bold text-slate-200">
-                                    {brightness === -1 ? "N/A" : brightness}
-                                </span>
-                            </div>
-                            <div className="text-xs text-slate-500 mt-1">
-                                {brightness === -1 ? "僅供目視" : (brightness > 80 ? "光線充足" : "偏暗")}
-                            </div>
+                        <div className={`bg-slate-900 p-2 rounded-xl border border-slate-800 flex flex-col items-center justify-center ${weather?.rain1h > 0 ? 'border-red-500/50 bg-red-900/10' : ''}`}>
+                            <div className="text-slate-400 text-[10px] mb-1 flex items-center gap-1"><Icons.ClockRain className="w-3 h-3"/> 近1小時</div>
+                            <div className="text-lg font-bold text-slate-200">{weather ? weather.rain1h.toFixed(1) : '-'}</div>
+                        </div>
+                        <div className={`p-2 rounded-xl border border-slate-800 flex flex-col items-center justify-center ${weather?.humidity > 90 ? 'bg-blue-900/30' : 'bg-slate-900'}`}>
+                            <div className="text-slate-400 text-[10px] mb-1 flex items-center gap-1"><Icons.Droplets className="w-3 h-3"/> 濕度%</div>
+                            <div className="text-lg font-bold text-slate-200">{weather ? weather.humidity : '-'}</div>
+                        </div>
+                        <div className="bg-slate-900 p-2 rounded-xl border border-slate-800 flex flex-col items-center justify-center">
+                            <div className="text-slate-400 text-[10px] mb-1 flex items-center gap-1"><Icons.Wind className="w-3 h-3"/> 風速</div>
+                            <div className="text-lg font-bold text-slate-200">{weather ? weather.wind : '-'}</div>
                         </div>
                     </div>
 
-                    <div className="mt-8 flex items-center gap-4 text-slate-400 text-xs">
-                        <span className="font-mono opacity-60">UPDATED: {lastUpdated}</span>
-                        <button 
-                            onClick={manualRefresh}
-                            className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 active:scale-95 transition-all text-orange-500 border border-slate-700"
-                        >
+                    {/* AI 視覺儀表板 (新增物件偵測結果) */}
+                    {cvData.available && (
+                        <div className="w-full max-w-md bg-slate-900/50 p-3 rounded-xl border border-slate-700/50 mb-4 text-xs">
+                            <div className="flex items-center gap-2 mb-3 text-orange-400 font-bold uppercase tracking-wider border-b border-slate-700 pb-1">
+                                <Icons.Brain className="w-3 h-3"/> AI 現場偵測 (每5秒)
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <div className="flex justify-between items-center mb-1">
+                                        <span className="text-slate-400">路面反光</span>
+                                        <span className="font-mono text-orange-400">{cvData.reflection.toFixed(1)}%</span>
+                                    </div>
+                                    <div className="w-full bg-slate-800 rounded-full h-1 overflow-hidden">
+                                        <div className={`h-1 rounded-full meter-fill ${cvData.reflection > 8 ? 'bg-red-500' : 'bg-blue-400'}`} style={{width: `${Math.min(cvData.reflection * 10, 100)}%`}}></div>
+                                    </div>
+                                </div>
+                                
+                                <div className="space-y-1">
+                                    <div className={`flex justify-between items-center ${cvData.umbrellas > 0 ? 'text-red-400 font-bold' : 'text-slate-400'}`}>
+                                        <span>☂️ 雨傘偵測</span>
+                                        <span>{cvData.umbrellas}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-slate-400">
+                                        <span>🚶 行人偵測</span>
+                                        <span>{cvData.persons}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="w-full max-w-md bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                        <div className="flex items-center gap-2 text-slate-300 mb-2 border-b border-slate-700 pb-2">
+                            <Icons.Zap className="w-4 h-4 text-yellow-400" />
+                            <span className="font-bold text-sm">綜合研判依據</span>
+                        </div>
+                        <div className="text-xs text-slate-400 whitespace-pre-line leading-relaxed">
+                            {decision.reason}
+                        </div>
+                    </div>
+
+                    <div className="mt-8 flex items-center justify-center gap-4 text-slate-500 text-xs">
+                        <span className="font-mono">UPDATED: {lastUpdated}</span>
+                        <button onClick={manualRefresh} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 text-orange-500">
                             <Icons.RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
                         </button>
                     </div>
